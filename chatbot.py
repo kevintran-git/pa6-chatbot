@@ -3,8 +3,9 @@
 # Original Python code by Ignacio Cases (@cases)
 ######################################################################
 import util
-
+import re
 import numpy as np
+from porter_stemmer import PorterStemmer
 
 
 # noinspection PyMethodMayBeStatic
@@ -14,22 +15,28 @@ class Chatbot:
     def __init__(self, creative=False):
         # The chatbot's default name is `moviebot`.
         # TODO: Give your chatbot a new name.
-        self.name = 'moviebot'
+        self.name = 'botttttbot'
 
         self.creative = creative
 
         # This matrix has the following shape: num_movies x num_users
         # The values stored in each row i and column j is the rating for
         # movie i by user j
+        self.user_ratings = []
+        self.state = "DEFAULT"
         self.titles, ratings = util.load_ratings('data/ratings.txt')
         self.sentiment = util.load_sentiment_dictionary('data/sentiment.txt')
 
         ########################################################################
         # TODO: Binarize the movie ratings matrix.                             #
         ########################################################################
-
         # Binarize the movie ratings before storing the binarized matrix.
-        self.ratings = ratings
+        self.ratings = self.binarize(ratings)
+        self.porter = PorterStemmer()
+        stemmed_sentiment = {}
+        for key in self.sentiment:
+            stemmed_sentiment[self.porter.stem(key)] = self.sentiment[key]
+        self.sentiment = stemmed_sentiment
         ########################################################################
         #                             END OF YOUR CODE                         #
         ########################################################################
@@ -96,10 +103,40 @@ class Chatbot:
         # directly based on how modular it is, we highly recommended writing   #
         # code in a modular fashion to make it easier to improve and debug.    #
         ########################################################################
+
+        """
+        DEFAULT = 
+        """
         if self.creative:
             response = "I processed {} in creative mode!!".format(line)
         else:
-            response = "I processed {} in starter mode!!".format(line)
+            response = ""
+            # Take in the user input
+            # See if the input contains any titles
+            titles = self.extract_titles(line)
+            # If it doesn't contains titles, filler to get back on track
+            if not titles:
+                response += "Sorry, but the college students that programmed me only taught me to recognize movies!"
+            # If it does contain titles, check for sentiment
+            else:
+                sentiment = self.extract_sentiment(line)
+                # If sentiment is unclear, ask for sentiment
+                if sentiment == 0:
+                    response += "Sorry, but did you like or dislike {}?".format(titles)
+                # Loop through each title
+                for title in titles:
+                    # Correct for spelling
+                    movie = self.find_movies_closest_to_title(title)
+                    # Check if title has corresponding movie
+                    movie = self.find_movies_by_title(title)
+                    # If no corresponding movie, tell user
+                    if not movie:
+                        response += "I didn't find any movies with the name {}.".format(title)
+                    # If multiple movies with same title, ask to clarify
+                    else:
+
+                        # Respond
+                        response += "I found the movie {}!".format(movie)
 
         ########################################################################
         #                          END OF YOUR CODE                            #
@@ -158,7 +195,8 @@ class Chatbot:
         pre-processed with preprocess()
         :returns: list of movie titles that are potentially in the text
         """
-        return []
+
+        return preprocessed_input.split('"')[1::2]
 
     def find_movies_by_title(self, title):
         """ Given a movie title, return a list of indices of matching movies.
@@ -178,9 +216,42 @@ class Chatbot:
         :param title: a string containing a movie title
         :returns: a list of indices of matching movies
         """
-        return []
+        year = ''
+        if title.find("(") != -1:
+            year = title[title.find("("):title.find(")") + 1]
+            title = title.replace(f' {year}', "")
+
+        first, _, rest = title.partition(' ')
+        if first in {'A', 'An', 'The'} and rest:
+            title = rest + ', ' + first
+
+        if year:
+            title = f'{title} {year}'
+
+        indices = []
+
+        if self.creative:
+            pass
+        else:
+            for i in range(len(self.titles)):
+                if year:
+                    if title == self.titles[i][0]:
+                        indices.append(i)
+                else:
+                    if title + ' (' in str(self.titles[i][0]):
+                        indices.append(i)
+        return indices
 
     def extract_sentiment(self, preprocessed_input):
+        # for sentiment, what slide should I refer to for this? I feel like we only talked about this in the context of bayes / logistic regression
+        # do i just see if the
+        # look for words that are in the sentiments we are given
+        # if we see a positive word, we +1 for sentiment
+        # more positive than negative words we return positive
+        # challenge is matching words in sentiment list
+
+        # what about negation? "i didn't like this movie"
+        # gotcha
         """Extract a sentiment rating from a line of pre-processed text.
 
         You should return -1 if the sentiment of the text is negative, 0 if the
@@ -200,6 +271,44 @@ class Chatbot:
         pre-processed with preprocess()
         :returns: a numerical value for the sentiment of the text
         """
+        for title in self.extract_titles(preprocessed_input):
+            preprocessed_input = preprocessed_input.replace(title, '')
+        words = preprocessed_input.split()
+        c_pos = 0
+        c_neg = 0
+        negated_dist = 0
+        max_negated_dist = 5
+        negated = False
+        regex = re.compile(r'[^a-zA-Z]')
+        for word in words:
+            if negated_dist >= max_negated_dist:
+                negated_dist = 0
+                negated = False
+            word = self.porter.stem(regex.sub('', word)).lower()  # remove non letters
+            sentiment = self.sentiment.get(word)
+            if word in ["no", "not", "rather", "couldnt", "wasnt", "didnt", "wouldnt", "shouldnt", "werent", "dont",
+                        "doesnt", "havent", "hasnt", "wont", "wont", "hadnt", "never", "none", "nobody", "nothing",
+                        "neither", "nor", "nowhere", "isnt", "cant", "cannot", "mustnt", "mightnt", "shant", "without",
+                        "neednt", "hardly", "less", "little", "rarely", "scarcely", "seldom"]:
+                negated = not negated
+            if sentiment == 'pos':
+                c_pos += -1 if negated else 1
+            elif sentiment == 'neg':
+                c_neg += 1 if negated else -1
+            if negated:
+                negated_dist+=1
+
+        threshold = 0.5
+        if not c_neg and not c_pos:
+            return 0
+        if not c_neg:
+            return 1 if c_pos > 0 else -1
+        if not c_pos:
+            return -1 if c_neg > 0 else 1
+        if abs(c_pos / c_neg) > threshold:
+            return 1
+        if abs(c_neg / c_pos) > threshold:
+            return -1
         return 0
 
     def extract_sentiment_for_movies(self, preprocessed_input):
@@ -223,7 +332,53 @@ class Chatbot:
         :returns: a list of tuples, where the first item in the tuple is a movie
         title, and the second is the sentiment in the text toward that movie
         """
-        pass
+        sentiments = []
+        movies = re.findall(r'\"(.*?)\"', preprocessed_input)
+        sentiment = self.extract_sentiment(preprocessed_input)
+
+        preprocessed_input = preprocessed_input.replace("but", "")
+        preprocessed_input = preprocessed_input.replace("however", "")
+
+        if len(movies) == 1 or re.search(r"(both|either|neither)", preprocessed_input):
+            sentiment = self.extract_sentiment(preprocessed_input)
+            for title in movies:
+                sentiments.append((title, sentiment))
+        else:
+            prev = 0
+            curr = 0
+            for i, title in enumerate(movies):
+                curr = preprocessed_input.find(title) + len(title) + 1
+                if i == len(movies) - 1:
+                    curr = -1
+                sub_text = preprocessed_input[:curr]
+                sentiment = self.extract_sentiment(sub_text)
+                sentiment = sentiment if sentiment == 0 else sentiment / abs(sentiment)
+                prev = curr
+                sentiments.append((title, sentiment))
+        return sentiments
+
+    def lev_dist(self, seq1, seq2):
+        table = np.zeros((len(seq1) + 1, len(seq2) + 1))  # create levenshtein table
+        for x in range(len(seq1) + 1):  # populate the terms already given
+            table[x, 0] = x
+        for y in range(len(seq2) + 1):
+            table[0, y] = y
+
+        for x in range(1, len(seq1) + 1):
+            for y in range(1, len(seq2) + 1):
+                if seq1[x - 1] == seq2[y - 1]:
+                    table[x, y] = min(  # case if chars match
+                        table[x - 1, y] + 1,
+                        table[x - 1, y - 1],
+                        table[x, y - 1] + 1
+                    )
+                else:
+                    table[x, y] = min(  # case if chars don't match
+                        table[x - 1, y] + 1,
+                        table[x - 1, y - 1] + 1,
+                        table[x, y - 1] + 1
+                    )
+        return table[len(seq1), len(seq2)]  # return top right corner
 
     def find_movies_closest_to_title(self, title, max_distance=3):
         """Creative Feature: Given a potentially misspelled movie title,
@@ -248,8 +403,21 @@ class Chatbot:
         :returns: a list of movie indices with titles closest to the given title
         and within edit distance max_distance
         """
+        movies = []
 
-        pass
+        for i in range(len(self.titles)):
+            t = self.titles[i][0]
+            if t.find("(") != -1:
+                year = t[t.find("("):t.find(")") + 1]
+                t = t.replace(f' {year}', "")
+
+            distance = self.lev_dist(title, t)
+            if distance == max_distance:
+                movies.append(i)
+            elif distance < max_distance:
+                max_distance = distance
+                movies = [i]
+        return movies
 
     def disambiguate(self, clarification, candidates):
         """Creative Feature: Given a list of movies that the user could be
@@ -274,7 +442,7 @@ class Chatbot:
         :returns: a list of indices corresponding to the movies identified by
         the clarification
         """
-        pass
+        return candidates[0]
 
     ############################################################################
     # 3. Movie Recommendation helper functions                                 #
@@ -307,9 +475,10 @@ class Chatbot:
 
         # The starter code returns a new matrix shaped like ratings but full of
         # zeros.
-        binarized_ratings = np.zeros_like(ratings)
-
-        ########################################################################
+        binarized_ratings = np.sign(ratings - threshold)
+        binarized_ratings = np.where(binarized_ratings == 0, -1, binarized_ratings)
+        binarized_ratings = np.where(ratings == 0, ratings, binarized_ratings)
+        ############ ############################################################
         #                        END OF YOUR CODE                              #
         ########################################################################
         return binarized_ratings
@@ -327,7 +496,7 @@ class Chatbot:
         ########################################################################
         # TODO: Compute cosine similarity between the two vectors.             #
         ########################################################################
-        similarity = 0
+        similarity = np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v))
         ########################################################################
         #                          END OF YOUR CODE                            #
         ########################################################################
@@ -370,12 +539,46 @@ class Chatbot:
         ########################################################################
 
         # Populate this list with k movie indices to recommend to the user.
-        recommendations = []
 
+        # list of nonzero indices and loops over user ratings to see if it doesnt equal zero it goes into nonzero indices
+        # indices j that users have rated
+        # map for ratings maps indices to rating
+        # loop through i movies in rating matrix
+        # within that loop through j for user has seen before
+        # similarities of ratings matrix i and ratings matrix j
+        # populating a map that maps indices to ratings
+
+        # oh so i'm currently looping through all of the movies ever here
+        # then for a nonzero value i'm finding the similarity of the movie that i'm looping through and the
+        # is movie also in the ratings matrix though?
+        # similarities is a 1D array of the ratings of each movie
+        # it should be call ratings
+        # the indices should be the same right?
+        # if it's zero then the function should return zero and the similarity should be zero?
+        # what should I do if the similarity is negative?
+        # ohhh
+        # should i start by looping over the user ratings first instead of the movies now?
+        # ah so indices isn't sparse like in my case right?
+        # so it should't contain any va/ues that the user hasn't rated
+        # great
+
+        nonzero = {}
+        for i in range(len(user_ratings)):
+            if user_ratings[i]:
+                nonzero[i] = user_ratings[i]
+        ratings = {}
+        for i in range(len(ratings_matrix)):
+            total = 0
+            for j in nonzero:
+                total += self.similarity(ratings_matrix[i], ratings_matrix[j]) * user_ratings[j]
+            ratings[i] = total if total == total else 0
+        [ratings.pop(key) for key in nonzero]
+        recommendations = sorted(ratings.keys(), key=
+        lambda key: ratings[key], reverse=True)
         ########################################################################
         #                        END OF YOUR CODE                              #
         ########################################################################
-        return recommendations
+        return recommendations[:k]
 
     ############################################################################
     # 4. Debug info                                                            #
@@ -410,6 +613,8 @@ class Chatbot:
 
 
 if __name__ == '__main__':
+    chatbot = Chatbot(False)
+    print(chatbot.extract_sentiment_for_movies('I liked "Titanic (1997)", but "Ex Machina" was not good.'))
     print('To run your chatbot in an interactive loop from the command line, '
           'run:')
     print('    python3 repl.py')
